@@ -3,12 +3,14 @@
  * It only manages SUCCESS actions because all UI state properties (like loading/error)
  * are managed by different global reducers.
  */
-import * as O from "fp-ts/lib/Option";
 import * as pot from "@pagopa/ts-commons/lib/pot";
+import { FiscalCode } from "@pagopa/ts-commons/lib/strings";
+import * as O from "fp-ts/lib/Option";
 import { createSelector } from "reselect";
 import { getType } from "typesafe-actions";
 import { EmailAddress } from "../../../definitions/backend/EmailAddress";
 import { InitializedProfile } from "../../../definitions/backend/InitializedProfile";
+import { ServicesPreferencesModeEnum } from "../../../definitions/backend/ServicesPreferencesMode";
 import { capitalize } from "../../utils/strings";
 import {
   profileLoadFailure,
@@ -18,7 +20,6 @@ import {
   resetProfileState
 } from "../actions/profile";
 import { Action } from "../actions/types";
-import { ServicesPreferencesModeEnum } from "../../../definitions/backend/ServicesPreferencesMode";
 import { GlobalState } from "./types";
 
 export type ProfileState = pot.Pot<InitializedProfile, Error>;
@@ -60,6 +61,22 @@ export const profileEmailSelector = createSelector(
       O.none
     )
 );
+
+// NEW FISCAL CODE SELECTOR BLOCK
+export const newFiscalCodeSelector = createSelector(
+  profileSelector,
+  (profile: ProfileState): O.Option<string> =>
+    pot.getOrElse(
+      pot.map(profile, p => getProfileFiscalCode(p)),
+      O.none
+    )
+);
+
+export const getProfileFiscalCode = (
+  user: InitializedProfile
+): O.Option<FiscalCode> => O.fromNullable(user.fiscal_code);
+
+//
 
 /**
  * Return the name of the profile if some, else undefined
@@ -170,6 +187,87 @@ const reducer = (
     //
 
     case getType(profileUpsert.request):
+      if (pot.isNone(state)) {
+        return state;
+      }
+      return pot.toUpdating(state, { ...state.value, ...action.payload });
+
+    case getType(profileUpsert.failure):
+      return pot.toError(state, action.payload);
+
+    case getType(profileUpsert.success):
+      if (pot.isSome(state)) {
+        const currentProfile = state.value;
+        const newProfile = action.payload.newValue;
+        const baseNewProfileTransaction = {
+          ...currentProfile,
+          email: newProfile.email,
+          is_email_enabled: newProfile.is_email_enabled === true,
+          is_inbox_enabled: newProfile.is_inbox_enabled === true,
+          is_email_validated: newProfile.is_email_validated === true,
+          is_webhook_enabled: newProfile.is_webhook_enabled === true,
+          preferred_languages: newProfile.preferred_languages,
+          blocked_inbox_or_channels: newProfile.blocked_inbox_or_channels,
+          accepted_tos_version: newProfile.accepted_tos_version,
+          service_preferences_settings: newProfile.service_preferences_settings
+        };
+
+        if (
+          // The API profile is still absent
+          !currentProfile.has_profile &&
+          newProfile.has_profile &&
+          isProfileFirstOnBoarding(newProfile)
+        ) {
+          return pot.some({
+            ...baseNewProfileTransaction,
+            has_profile: true,
+            version: 0
+          });
+        }
+
+        if (
+          // We already have a API profile
+          currentProfile.has_profile &&
+          newProfile.has_profile &&
+          currentProfile.version < newProfile.version
+        ) {
+          return pot.some({
+            ...baseNewProfileTransaction,
+            version: newProfile.version
+          });
+        }
+
+        return state;
+      } else {
+        // We can't merge an updated profile if we haven't loaded a full
+        // profile yet
+        return state;
+      }
+
+    default:
+      return state;
+  }
+};
+
+const reducers = (
+  state: ProfileState = INITIAL_STATE,
+  action: Action
+): ProfileState => {
+  switch (action.type) {
+    case getType(resetProfileState):
+      return pot.none;
+
+    case getType(profileLoadRequest):
+      return pot.toLoading(state);
+
+    case getType(profileLoadSuccess):
+      // Store the loaded Profile in the store
+      return pot.some(action.payload);
+
+    case getType(profileLoadFailure):
+      return pot.toError(state, action.payload);
+
+    case getType(profileUpsert.request):
       if (!pot.isSome(state)) {
         return state;
       }
@@ -238,5 +336,4 @@ const reducer = (
       return state;
   }
 };
-
 export default reducer;
