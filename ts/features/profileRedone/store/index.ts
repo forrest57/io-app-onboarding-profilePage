@@ -30,13 +30,13 @@ const profileSlice = createSlice({
   name: "profile",
   initialState,
   reducers: {
-    profileLoadRequest(state) {
+    profileLoadRequest(state: ProfileState) {
       pot.toLoading(state);
     },
-    profileLoadSuccess(_, action: PayloadAction) {
+    profileLoadSuccess(_, action: PayloadAction<InitializedProfile>) {
       pot.some(action.payload);
     },
-    profileLoadFailure(state, action) {
+    profileLoadFailure(state: ProfileState, action: PayloadAction<Error>) {
       pot.toError(state, action.payload);
     }
     // setOnboardingOrigin: (
